@@ -156,4 +156,4 @@ def reply(message):
             "❌ Не удалось отправить сообщение." 
             )
         
-        bot.infinity_polling()
+bot.infinity_polling()
