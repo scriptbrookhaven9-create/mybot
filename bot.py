@@ -42,7 +42,7 @@ def start(message):
     markup.add("📋 Подать анкету")
     markup.add("📜 Правила отряда")
     markup.add("💬 Дискорд FOF")
-    markup.add("🎒 Получить информацию")
+    markup.add("🎒 Получить снаряжение")
 
     bot.send_message(
         message.chat.id,
