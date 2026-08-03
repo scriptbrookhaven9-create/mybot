@@ -153,5 +153,4 @@ def reply(message):
     except:
         bot.send_message(
             message.chat.id,
-            "❌ Не удалось отправить сообщение." )
-        bot.infinity_polling()
+            "❌ Не удалось отправить сообщение." )bot.infinity_polling()
