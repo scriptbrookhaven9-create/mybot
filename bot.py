@@ -1,5 +1,6 @@
 import telebot
 from telebot import types
+import time
 
 TOKEN = "8840831117:AAFsuZW65TrEdPFVUv9vYCZNhmdNfzIj0lY"
 ADMIN_ID = 8232776469
@@ -8,6 +9,80 @@ bot = telebot.TeleBot(TOKEN)
 
 waiting_for_form = {}
 anketa_messages = {}  # message_id (у админа) -> chat_id пользователя, подавшего анкету
+
+# ---- система предупреждений за мат и спам ----
+BAD_WORDS = ["мат1", "мат2", "мат3"]  # впиши сюда свои слова для фильтра
+SPAM_INTERVAL = 3      # если сообщения идут быстрее, чем раз в 3 секунды - подозрение на спам
+SPAM_STREAK_LIMIT = 4  # столько быстрых сообщений подряд = спам
+MAX_WARNINGS = 3        # после скольких предупреждений бот перестаёт отвечать
+
+warnings_count = {}
+blocked_users = set()
+last_message_time = {}
+message_streak = {}
+
+
+def check_violation(message):
+    user_id = message.from_user.id
+    if user_id == ADMIN_ID:
+        return False  # админа не проверяем
+
+    if user_id in blocked_users:
+        return True  # бот уже не отвечает этому пользователю
+
+    text = (message.text or "").lower()
+
+    is_spam = False
+    now = time.time()
+    last_time = last_message_time.get(user_id, 0)
+    if now - last_time < SPAM_INTERVAL:
+        message_streak[user_id] = message_streak.get(user_id, 0) + 1
+        if message_streak[user_id] >= SPAM_STREAK_LIMIT:
+            is_spam = True
+    else:
+        message_streak[user_id] = 0
+    last_message_time[user_id] = now
+
+    is_mat = any(word in text for word in BAD_WORDS)
+
+    if is_mat or is_spam:
+        warnings_count[user_id] = warnings_count.get(user_id, 0) + 1
+        count = warnings_count[user_id]
+
+        if count >= MAX_WARNINGS:
+            blocked_users.add(user_id)
+            bot.send_message(
+                message.chat.id,
+                f"🚫 Вы получили {count} предупреждений. Бот больше не будет вам отвечать."
+            )
+        else:
+            bot.send_message(
+                message.chat.id,
+                "Пожалуйста, не делайте так. Вы получили предупреждение "
+                f"({count}/{MAX_WARNINGS}). Если вы получите достаточное количество "
+                "предупреждений, бот перестанет вам отвечать."
+            )
+        return True
+
+    return False
+
+
+@bot.message_handler(commands=["unblock"])
+def unblock_user(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.send_message(message.chat.id, "Использование: /unblock ID_пользователя")
+        return
+    try:
+        target_id = int(parts[1])
+        blocked_users.discard(target_id)
+        warnings_count.pop(target_id, None)
+        bot.send_message(message.chat.id, f"Пользователь {target_id} разблокирован.")
+    except ValueError:
+        bot.send_message(message.chat.id, "ID должен быть числом.")
+# ---- конец системы предупреждений ----
 
 RULES = """
 📜 Правила подразделения FOF | 46 ОАеМБр
@@ -40,6 +115,8 @@ DISCORD = "https://discord.gg/zwNXncdn"
 
 @bot.message_handler(commands=["start"])
 def start(message):
+    if check_violation(message):
+        return
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("📋 Подать анкету")
     markup.add("📜 Правила отряда")
@@ -62,6 +139,8 @@ def craka(message):
 
 @bot.message_handler(func=lambda m: m.text == "📋 Подать анкету")
 def form(message):
+    if check_violation(message):
+        return
     waiting_for_form[message.chat.id] = True
 
     bot.send_message(
@@ -138,6 +217,9 @@ def admin_reply(message):
 
 @bot.message_handler(func=lambda m: True)
 def text(message):
+    if check_violation(message):
+        return
+
     if waiting_for_form.get(message.chat.id):
         waiting_for_form.pop(message.chat.id)
 
