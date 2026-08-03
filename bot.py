@@ -7,6 +7,7 @@ ADMIN_ID = 8232776469
 bot = telebot.TeleBot(TOKEN)
 
 waiting_for_form = {}
+anketa_messages = {}  # message_id (у админа) -> chat_id пользователя, подавшего анкету
 
 RULES = """
 📜 Правила подразделения FOF | 46 ОАеМБр
@@ -36,6 +37,7 @@ RULES = """
 
 DISCORD = "https://discord.gg/zwNXncdn"
 
+
 @bot.message_handler(commands=["start"])
 def start(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -51,6 +53,12 @@ def start(message):
         "Для того чтобы подать анкету в подразделение, пожалуйста, выберите команду снизу, чтобы продолжить разговор.",
         reply_markup=markup
     )
+
+
+@bot.message_handler(commands=["craka"])
+def craka(message):
+    bot.send_message(message.chat.id, "Я люблю Бандеру ♥️")
+
 
 @bot.message_handler(func=lambda m: m.text == "📋 Подать анкету")
 def form(message):
@@ -75,13 +83,17 @@ def form(message):
 После заполнения ожидайте, пожалуйста."""
     )
 
+
 @bot.message_handler(func=lambda m: m.text == "📜 Правила отряда")
 def rules(message):
     bot.send_message(message.chat.id, RULES)
 
+
 @bot.message_handler(func=lambda m: m.text == "💬 Дискорд FOF")
 def discord(message):
     bot.send_message(message.chat.id, DISCORD)
+
+
 @bot.message_handler(func=lambda m: m.text == "🎒 Получить информацию")
 def info(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -99,28 +111,52 @@ def info(message):
         "Выберите роль:",
         reply_markup=markup
     )
-    
+
+
 @bot.message_handler(commands=["ankets"])
 def ankets(message):
     if message.from_user.id == ADMIN_ID:
         bot.send_message(message.chat.id, "Все новые анкеты будут приходить сюда автоматически.")
+
+
+# Ответ администратора на анкету:
+# Если ты (ADMIN_ID) отвечаешь (Reply) на сообщение с анкетой в этом чате с ботом,
+# бот перешлёт твой ответ тому пользователю, который подавал именно эту анкету.
+@bot.message_handler(
+    func=lambda m: m.reply_to_message is not None
+    and m.from_user.id == ADMIN_ID
+    and m.reply_to_message.message_id in anketa_messages
+)
+def admin_reply(message):
+    user_chat_id = anketa_messages[message.reply_to_message.message_id]
+    bot.send_message(
+        user_chat_id,
+        f"📩 Ответ от администрации:\n\n{message.text}"
+    )
+    bot.send_message(message.chat.id, "✅ Ответ отправлен пользователю.")
+
 
 @bot.message_handler(func=lambda m: True)
 def text(message):
     if waiting_for_form.get(message.chat.id):
         waiting_for_form.pop(message.chat.id)
 
-        bot.send_message(
+        sent = bot.send_message(
             ADMIN_ID,
             f"📨 Новая анкета\n\n"
             f"👤 @{message.from_user.username}\n"
             f"🆔 {message.from_user.id}\n\n"
-            f"{message.text}"
+            f"{message.text}\n\n"
+            f"↩️ Чтобы ответить, сделайте Reply на это сообщение."
         )
+
+        # запоминаем связь: сообщение у админа -> чат пользователя
+        anketa_messages[sent.message_id] = message.chat.id
 
         bot.send_message(
             message.chat.id,
             "✅ Спасибо! Ваша анкета отправлена. Ожидайте ответа администрации."
         )
-        
+
+
 bot.infinity_polling()
