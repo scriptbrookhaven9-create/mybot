@@ -1,12 +1,13 @@
 import telebot
 from telebot import types
 
-TOKEN = "8840831117:AAFsuZW65TrEdPFVUv9vYCZNhmdNfzIj0lY"
+TOKEN = "YOUR_NEW_BOT_TOKEN"
 ADMIN_ID = 8232776469
 
 bot = telebot.TeleBot(TOKEN)
 
 waiting_for_form = {}
+saved_forms = []
 
 RULES = """
 📜 Правила отряда FOF | 46 ОАеМБр
@@ -47,7 +48,9 @@ def form(message):
 
     bot.send_message(
         message.chat.id,
-"Возраст:
+        """Здравствуйте, пожалуйста, заполните анкету по примеру ниже.
+
+Возраст:
 Роль:
 Причина вступления:
 Сколько времени сможете уделять активности в день:
@@ -65,23 +68,39 @@ def rules(message):
 def discord(message):
     bot.send_message(message.chat.id, DISCORD)
 
+@bot.message_handler(commands=["craka"])
+def craka(message):
+    bot.send_message(message.chat.id, "Я люблю Бандеру ♥️")
+
 @bot.message_handler(commands=["ankets"])
 def ankets(message):
-    if message.from_user.id == ADMIN_ID:
-        bot.send_message(message.chat.id, "Все новые анкеты будут приходить сюда автоматически.")
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    if not saved_forms:
+        bot.send_message(message.chat.id, "📭 Пока нет ни одной анкеты.")
+        return
+
+    bot.send_message(
+        message.chat.id,
+        "\n\n--------------------\n\n".join(saved_forms)
+    )
 
 @bot.message_handler(func=lambda m: True)
 def text(message):
     if waiting_for_form.get(message.chat.id):
         waiting_for_form.pop(message.chat.id)
 
-        bot.send_message(
-            ADMIN_ID,
+        form_text = (
             f"📨 Новая анкета\n\n"
             f"👤 @{message.from_user.username}\n"
             f"🆔 {message.from_user.id}\n\n"
             f"{message.text}"
         )
+
+        saved_forms.append(form_text)
+
+        bot.send_message(ADMIN_ID, form_text)
 
         bot.send_message(
             message.chat.id,
@@ -89,6 +108,3 @@ def text(message):
         )
 
 bot.infinity_polling()
-@bot.message_handler(commands=["craka"])
-def craka(message):
-    bot.send_message(message.chat.id, "Я люблю Бандеру ♥️")
