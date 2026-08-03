@@ -42,6 +42,7 @@ def start(message):
     markup.add("📋 Подать анкету")
     markup.add("📜 Правила отряда")
     markup.add("💬 Дискорд FOF")
+    markup.add("🎒 Получить информацию")
 
     bot.send_message(
         message.chat.id,
@@ -81,7 +82,24 @@ def rules(message):
 @bot.message_handler(func=lambda m: m.text == "💬 Дискорд FOF")
 def discord(message):
     bot.send_message(message.chat.id, DISCORD)
+@bot.message_handler(func=lambda m: m.text == "🎒 Получить информацию")
+def info(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("Пулемётчик")
+    markup.add("Спец. БПЛА")
+    markup.add("Штурмовик")
+    markup.add("Снайпер")
+    markup.add("Сапёр")
+    markup.add("Гранатомётчик")
+    markup.add("Оператор ПЗРК")
+    markup.add("⬅️ Назад")
 
+    bot.send_message(
+        message.chat.id,
+        "Выберите роль:",
+        reply_markup=markup
+    )
+    
 @bot.message_handler(commands=["ankets"])
 def ankets(message):
     if message.from_user.id == ADMIN_ID:
