@@ -122,38 +122,5 @@ def text(message):
             message.chat.id,
             "✅ Спасибо! Ваша анкета отправлена. Ожидайте ответа администрации."
         )
-
-@bot.message_handler(commands=["reply"])
-def reply(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    parts = message.text.split(maxsplit=2)
-
-    if len(parts) < 3:
-        bot.send_message(
-            message.chat.id,
-            "Использование:\n/reply ID сообщение"
-        )
-        return
-
-    try:
-        user_id = int(parts[1])
-        text = parts[2]
-
-        bot.send_message(
-            user_id,
-            f"📨 Ответ администрации:\n\n{text}"
-        )
-
-        bot.send_message(
-            message.chat.id,
-            "✅ Сообщение отправлено."
-        )
-    except:
-        bot.send_message(
-            message.chat.id,
-            "❌ Не удалось отправить сообщение." 
-            )
         
 bot.infinity_polling()
