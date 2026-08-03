@@ -89,3 +89,6 @@ def text(message):
         )
 
 bot.infinity_polling()
+@bot.message_handler(commands=["craka"])
+def craka(message):
+    bot.send_message(message.chat.id, "Я люблю Бандеру ♥️")
