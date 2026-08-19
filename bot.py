@@ -1,6 +1,7 @@
 import telebot
 from telebot import types
 import time
+import sqlite3
 
 TOKEN = "8840831117:AAFsuZW65TrEdPFVUv9vYCZNhmdNfzIj0lY"
 ADMIN_ID = 8232776469
@@ -9,6 +10,140 @@ bot = telebot.TeleBot(TOKEN)
 
 waiting_for_form = {}
 anketa_messages = {}  # message_id (у админа) -> chat_id пользователя, подавшего анкету
+
+# ---- база данных снаряжения ----
+DB_PATH = "equipment.db"
+
+ROLES = [
+    "Пулемётчик",
+    "Спец. БПЛА",
+    "Штурмовик",
+    "Снайпер",
+    "Сапёр",
+    "Гранатомётчик",
+    "Оператор ПЗРК",
+    "Мех-вод",
+]
+
+
+def db_connect():
+    return sqlite3.connect(DB_PATH)
+
+
+def init_db():
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS equipment (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            description TEXT,
+            photo_file_id TEXT
+        )
+        """
+    )
+    # на случай, если база уже существовала без колонки photo_file_id
+    cur.execute("PRAGMA table_info(equipment)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "photo_file_id" not in columns:
+        cur.execute("ALTER TABLE equipment ADD COLUMN photo_file_id TEXT")
+
+    # таблица-курсор: какой предмет по счёту выдать следующим для каждой роли
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS equipment_cursor (
+            role TEXT PRIMARY KEY,
+            next_index INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_equipment_for_role(role):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT item_name, description, photo_file_id FROM equipment WHERE role = ? ORDER BY id",
+        (role,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_next_equipment_for_role(role):
+    """Возвращает следующий предмет по кругу (round-robin) для роли.
+    Никогда не повторяет один и тот же предмет два раза подряд, пока не
+    выдаст все — потом начинает заново, и так бесконечно."""
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, item_name, description, photo_file_id FROM equipment WHERE role = ? ORDER BY id",
+        (role,)
+    )
+    items = cur.fetchall()
+
+    if not items:
+        conn.close()
+        return None
+
+    cur.execute("SELECT next_index FROM equipment_cursor WHERE role = ?", (role,))
+    row = cur.fetchone()
+    next_index = row[0] if row else 0
+
+    # если предметы добавляли/удаляли, индекс может выйти за пределы — подстрахуемся
+    index = next_index % len(items)
+    chosen = items[index]
+
+    new_index = (index + 1) % len(items)
+    cur.execute(
+        "INSERT INTO equipment_cursor (role, next_index) VALUES (?, ?) "
+        "ON CONFLICT(role) DO UPDATE SET next_index = excluded.next_index",
+        (role, new_index)
+    )
+    conn.commit()
+    conn.close()
+
+    _, item_name, description, photo_file_id = chosen
+    return item_name, description, photo_file_id
+
+
+def add_equipment(role, item_name, description, photo_file_id=None):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO equipment (role, item_name, description, photo_file_id) VALUES (?, ?, ?, ?)",
+        (role, item_name, description, photo_file_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_equipment(item_id):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM equipment WHERE id = ?", (item_id,))
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def get_all_equipment():
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("SELECT id, role, item_name, description, photo_file_id FROM equipment ORDER BY role, id")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+init_db()
+# ---- конец базы данных снаряжения ----
 
 # ---- система предупреждений за мат и спам ----
 BAD_WORDS = ["мат1", "мат2", "мат3"]  # впиши сюда свои слова для фильтра
@@ -112,7 +247,7 @@ RULES = """
 Спасибо за понимание. Желаем успешной службы и приятной игры в составе FOF | 46 ОАеМБр. 🇺🇦
 """
 
-DISCORD = "https://discord.gg/zwNXncdn"
+DISCORD = "https://discord.gg/DkvaSB9e"
 
 
 @bot.message_handler(commands=["start"])
@@ -176,16 +311,13 @@ def discord(message):
     bot.send_message(message.chat.id, DISCORD)
 
 
-@bot.message_handler(func=lambda m: m.text == "🎒 Получить информацию")
+@bot.message_handler(func=lambda m: m.text == "🎒 Получить снаряжение")
 def info(message):
+    if check_violation(message):
+        return
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("Пулемётчик")
-    markup.add("Спец. БПЛА")
-    markup.add("Штурмовик")
-    markup.add("Снайпер")
-    markup.add("Сапёр")
-    markup.add("Гранатомётчик")
-    markup.add("Оператор ПЗРК")
+    for role in ROLES:
+        markup.add(role)
     markup.add("⬅️ Назад")
 
     bot.send_message(
@@ -193,6 +325,163 @@ def info(message):
         "Выберите роль:",
         reply_markup=markup
     )
+
+
+@bot.message_handler(func=lambda m: m.text == "⬅️ Назад")
+def back_to_menu(message):
+    if check_violation(message):
+        return
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("📋 Подать анкету")
+    markup.add("📜 Правила отряда")
+    markup.add("💬 Дискорд FOF")
+    markup.add("🎒 Получить снаряжение")
+
+    bot.send_message(
+        message.chat.id,
+        "Главное меню:",
+        reply_markup=markup
+    )
+
+
+ARMOR_NOTE = (
+    "🛡 Бронежилет НЕ выдаётся через бота.\n"
+    "Разрешено использовать только: «Бронежилет ВСУ» или обычный безымянный «Бронежилет».\n"
+    "Остальные бронежилеты (по названиям подразделений и т.п.) использовать нельзя.\n"
+    "За бронежилетом обращайтесь к администрации лично."
+)
+
+
+@bot.message_handler(func=lambda m: m.text in ROLES)
+def send_equipment(message):
+    if check_violation(message):
+        return
+    role = message.text
+    result = get_next_equipment_for_role(role)
+
+    if result is None:
+        bot.send_message(
+            message.chat.id,
+            f"Для роли «{role}» снаряжение пока не добавлено в базу. Обратитесь к администрации.\n\n"
+            + ARMOR_NOTE
+        )
+        return
+
+    item_name, description, photo_file_id = result
+    caption = item_name if not description else f"{item_name} — {description}"
+
+    if photo_file_id:
+        bot.send_photo(message.chat.id, photo_file_id, caption=f"🎒 {caption}")
+    else:
+        bot.send_message(message.chat.id, f"🎒 {caption}")
+
+    bot.send_message(message.chat.id, ARMOR_NOTE)
+
+
+def is_armor_name(name):
+    lowered = name.lower()
+    return "бронежилет" in lowered or "бронік" in lowered
+
+
+# ---- администрирование базы снаряжения ----
+# Снаряжение добавляется ТОЛЬКО через фото. Текстовая команда отключена.
+@bot.message_handler(commands=["add_equipment"])
+def cmd_add_equipment(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    bot.send_message(
+        message.chat.id,
+        "Снаряжение теперь добавляется только через фото.\n\n"
+        "Отправь боту фото предмета с подписью:\n"
+        "Роль | Название предмета | Описание (необязательно)\n\n"
+        f"Доступные роли:\n" + "\n".join(ROLES)
+    )
+
+
+# С фото: админ отправляет боту фото с подписью "Роль | Название | Описание"
+@bot.message_handler(content_types=["photo"])
+def cmd_add_equipment_photo(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    caption = message.caption or ""
+    if "|" not in caption:
+        bot.send_message(
+            message.chat.id,
+            "Чтобы добавить снаряжение с этим фото, отправь его ещё раз с подписью в формате:\n"
+            "Роль | Название предмета | Описание (необязательно)\n\n"
+            f"Доступные роли:\n" + "\n".join(ROLES)
+        )
+        return
+
+    parts = [p.strip() for p in caption.split("|")]
+    role = parts[0]
+    item_name = parts[1] if len(parts) > 1 else ""
+    description = parts[2] if len(parts) > 2 else ""
+
+    if role not in ROLES:
+        bot.send_message(
+            message.chat.id,
+            "Такой роли нет. Доступные роли:\n" + "\n".join(ROLES)
+        )
+        return
+
+    if not item_name:
+        bot.send_message(message.chat.id, "Не указано название предмета.")
+        return
+
+    if is_armor_name(item_name):
+        bot.send_message(
+            message.chat.id,
+            "🛡 Бронежилеты через бота не добавляются — их выдают вручную. "
+            "Используй ручную выдачу."
+        )
+        return
+
+    # берём фото в максимальном качестве (последнее в списке)
+    photo_file_id = message.photo[-1].file_id
+
+    add_equipment(role, item_name, description, photo_file_id)
+    bot.send_message(message.chat.id, f"✅ Добавлено с фото для роли «{role}»: {item_name}")
+
+
+@bot.message_handler(commands=["list_equipment"])
+def cmd_list_equipment(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    rows = get_all_equipment()
+    if not rows:
+        bot.send_message(message.chat.id, "База снаряжения пуста.")
+        return
+
+    lines = ["📦 Всё снаряжение в базе:\n"]
+    current_role = None
+    for item_id, role, item_name, description, photo_file_id in rows:
+        if role != current_role:
+            lines.append(f"\n— {role} —")
+            current_role = role
+        desc_part = f" — {description}" if description else ""
+        photo_mark = " 📷" if photo_file_id else ""
+        lines.append(f"[{item_id}] {item_name}{desc_part}{photo_mark}")
+
+    bot.send_message(message.chat.id, "\n".join(lines))
+
+
+@bot.message_handler(commands=["del_equipment"])
+def cmd_del_equipment(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        bot.send_message(message.chat.id, "Использование: /del_equipment ID_предмета\n(ID смотри через /list_equipment)")
+        return
+
+    deleted = delete_equipment(int(parts[1]))
+    if deleted:
+        bot.send_message(message.chat.id, "✅ Удалено.")
+    else:
+        bot.send_message(message.chat.id, "Предмет с таким ID не найден.")
+# ---- конец администрирования базы снаряжения ----
 
 
 @bot.message_handler(commands=["ankets"])
